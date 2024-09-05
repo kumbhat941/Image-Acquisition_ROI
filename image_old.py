@@ -3,21 +3,22 @@ import time
 from pymba import Vimba, Frame, VimbaException
 import cv2
 from pathlib import Path
+import cv2
 
 PIXEL_FORMATS_CONVERSIONS = {
     'BayerRG8': cv2.COLOR_BAYER_RG2RGB,
 }
 
-saveframe_count = 8  # Save every N-th frame
+save_interval = 8  # Save every N seconds
 datadir = Path(r'D:\THD Spiegelau project\04.09')
 samplename = '06_03'
-frame_counter = 0
 
 ROI_SELECTED = False  # Flag to indicate if ROI is selected
 roi = None  # Store the selected ROI
+last_save_time = None  # Track the time when the last image was saved
 
 def display_frame(frame: Frame, delay: int = 1) -> None:
-    global frame_counter, ROI_SELECTED, roi
+    global ROI_SELECTED, roi, last_save_time
     start_time = time.time()  # Measure frame processing start time
 
     # Get a copy of the frame data
@@ -30,11 +31,14 @@ def display_frame(frame: Frame, delay: int = 1) -> None:
         pass
 
     # Print the frame ID to track frame acquisition
-    print(f"Processing frame ID: {frame.data.frameID}, frame_counter: {frame_counter}")
+    print(f"Processing frame ID: {frame.data.frameID}")
 
-    # Save every saveframe_count-th frame
-    if frame.data.frameID % saveframe_count == 0:
-        print(f"Saving frame {frame_counter} (frame ID: {frame.data.frameID})")
+    # Save images based on elapsed time
+    current_time = time.time()
+    if last_save_time is None or (current_time - last_save_time) >= save_interval:
+        last_save_time = current_time  # Reset the last save time
+
+        print(f"Saving frame at {datetime.datetime.now()}")
 
         # If ROI is selected, crop the full-size image based on the ROI
         if ROI_SELECTED and roi is not None:
@@ -46,11 +50,9 @@ def display_frame(frame: Frame, delay: int = 1) -> None:
             cv2.imwrite(str(datadir / outputfile), cropped_image)
         else:
             # Save the full image if no ROI is selected
-            outputfile = f'{samplename}_{frame_counter:06d}.tiff'
+            time_stamp = datetime.datetime.now()
+            outputfile = f"{samplename}_{time_stamp.hour}-{time_stamp.minute}-{time_stamp.second}-{time_stamp.microsecond}.tiff"
             cv2.imwrite(str(datadir / outputfile), image)
-        frame_counter += 1
-    else:
-        print(f"Skipping frame {frame.data.frameID} (not every {saveframe_count}th frame)")
 
     # Print the processing time for the current frame
     print(f"Frame processing time: {time.time() - start_time} seconds")
@@ -82,7 +84,7 @@ def select_roi_on_resized_image(frame: Frame) -> tuple:
     return roi_full_size
 
 def main():
-    global ROI_SELECTED, roi
+    global ROI_SELECTED, roi, last_save_time
     with Vimba() as vimba:
         camera = vimba.camera(0)
         camera.open()
@@ -110,7 +112,12 @@ def main():
 
         camera.TriggerSelector = 'FrameStart'
         camera.TriggerSource = 'Software'
-        camera.AcquisitionFrameRateAbs = 1  # Adjust this as needed
+
+        # Set AcquisitionFrameRateAbs and print it back
+        frame_rate = 5  # Desired frame rate
+        camera.AcquisitionFrameRateAbs = frame_rate
+        print(f"Requested Frame Rate: {frame_rate} FPS")
+        print(f"Applied Frame Rate: {camera.AcquisitionFrameRateAbs} FPS")  # Read it back
 
         # Arm the camera and acquire a single frame for ROI selection
         camera.arm('SingleFrame')
@@ -128,12 +135,11 @@ def main():
         # Arm the camera again for continuous acquisition
         camera.arm('Continuous', display_frame)
         camera.start_frame_acquisition()
-        key = 'e'
 
-        # Main loop
+        # Main loop to measure frame intervals
         try:
-            while key != 'c':
-                key = input("the cam is on")
+            while True:
+                time.sleep(1/frame_rate)  # Keep loop aligned with expected frame rate
         except KeyboardInterrupt:
             print("Acquisition interrupted by user")
 
